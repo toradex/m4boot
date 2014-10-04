@@ -35,11 +35,14 @@
 #define CCM_CCOWR 0x8c
 #define CCM_CCOWR_START 0x00015a5a
 
-#define ENTRY_POINT 0x1f000401
-#define LOAD_ADDR 0x3f000000
+#define ENTRY_POINT 0x8f000001UL
+#define LOAD_ADDR 0x8f000000UL
 
-int load_bin(const char *file, int mem_fd);
-int run_m4(int mem_fd, unsigned int arg);
+#define LOAD_ADDR_DTB 0x8fff0000UL
+#define ARG_ADDR_DTB 0x8fff0000UL
+
+int load_bin(const char *file, unsigned int dest, int mem_fd);
+int run_m4(int mem_fd);
 
 int main(int argc, char *argv[])
 {
@@ -56,11 +59,15 @@ int main(int argc, char *argv[])
 		return 1;
 	}
 
-	err = load_bin(argv[1], fd);
+	err = load_bin(argv[1], LOAD_ADDR, fd);
 	if (err)
 		goto err_close;
 
-	err = run_m4(fd, 0xabcd1234);
+	err = load_bin(argv[2], LOAD_ADDR_DTB, fd);
+	if (err)
+		goto err_close;
+
+	err = run_m4(fd);
 
 err_close:
 	close(fd);
@@ -68,7 +75,7 @@ err_close:
 	return 0;
 }
 
-int load_bin(const char *file, int mem_fd)
+int load_bin(const char *file, unsigned int dest, int mem_fd)
 {
 	int fp;
 	size_t result;
@@ -86,10 +93,10 @@ int load_bin(const char *file, int mem_fd)
 	fprintf(stderr, "Loading binary file %s, %d bytes\n", file, size);
 
 	mem = (unsigned char *) mmap(0, size, PROT_READ|PROT_WRITE,
-			MAP_SHARED, mem_fd, LOAD_ADDR);
+			MAP_SHARED, mem_fd, dest);
 
 	if (mem == MAP_FAILED) {
-		fprintf(stderr, "Mapping of %x failed\n", LOAD_ADDR);
+		fprintf(stderr, "Mapping of 0x%08x failed\n", dest);
 		return 1;
 	}
 
@@ -104,7 +111,7 @@ int load_bin(const char *file, int mem_fd)
 	}
 
 	fprintf(stderr, "%s: %d bytes loaded to 0x%08x through 0x%08x\n",
-			file, loaded, LOAD_ADDR, LOAD_ADDR + loaded);
+			file, loaded, dest, dest + loaded);
 
 	close(fp);
 	munmap(mem, size);
@@ -112,7 +119,7 @@ int load_bin(const char *file, int mem_fd)
 	return 0;
 }
 
-int run_m4(int mem_fd, unsigned int arg)
+int run_m4(int mem_fd)
 {
 	unsigned char *src_mem;
 	unsigned char *ccm_mem;
@@ -139,9 +146,11 @@ int run_m4(int mem_fd, unsigned int arg)
 
 	src_reg = (unsigned int *)(src_mem + SRC_GPR2);
 	*src_reg = ENTRY_POINT;
-	src_reg = (unsigned int *)(src_mem + SRC_GPR3);
-	*src_reg = arg;
 	printf("Entry point set to 0x%08x\n", *src_reg);
+	src_reg = (unsigned int *)(src_mem + SRC_GPR3);
+	*src_reg = ARG_ADDR_DTB;
+	printf("Argument set to 0x%08x\n", *src_reg);
+	fflush(stdout);
 
 	ccm_reg = (unsigned int *)(ccm_mem + CCM_CCOWR);
 	*ccm_reg = CCM_CCOWR_START;

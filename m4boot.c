@@ -41,6 +41,8 @@
 #define LOAD_ADDR_DTB 0x8fff0000UL
 #define ARG_ADDR_DTB 0x8fff0000UL
 
+#define LOAD_ADDR_INITRD 0x89000000
+
 int load_bin(const char *file, unsigned int dest, int mem_fd);
 int run_m4(int mem_fd);
 
@@ -66,6 +68,12 @@ int main(int argc, char *argv[])
 	err = load_bin(argv[2], LOAD_ADDR_DTB, fd);
 	if (err)
 		goto err_close;
+
+	if (argc > 3) {
+		err = load_bin(argv[3], LOAD_ADDR_INITRD, fd);
+		if (err)
+			goto err_close;
+	}
 
 	err = run_m4(fd);
 

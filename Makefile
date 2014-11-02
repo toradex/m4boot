@@ -3,6 +3,7 @@
 #
 
 CC=$(CROSS_COMPILE)gcc
+OBJCOPY=$(CROSS_COMPILE)objcopy
 CPPFLAGS=-I libfdt -I .
 CFLAGS=-Wall
 
@@ -51,7 +52,11 @@ endif
 M4BOOT_SRCS = m4boot.c fdthelper.c
 M4BOOT_OBJS = $(M4BOOT_SRCS:%.c=%.o)
 
-m4boot: $(M4BOOT_OBJS) $(LIBFDT_archive)
+vf610m4bootldr.o:
+	@$(VECHO) OBJCOPY $@
+	$(OBJCOPY) -I binary -O elf32-littlearm -B arm vf610m4bootldr $@
+
+m4boot: $(M4BOOT_OBJS) $(LIBFDT_archive) vf610m4bootldr.o
 
 #m4boot: m4boot.o
 #	@$(VECHO) CC
@@ -62,7 +67,7 @@ STD_CLEANFILES = *~ *.o *.$(SHAREDLIB_EXT) *.d *.a *.i *.s
 .PHONY : clean
 clean: libfdt_clean
 	@$(VECHO) CLEAN
-	rm -f m4boot m4boot.o fdthelper.o
+	rm -f m4boot m4boot.o fdthelper.o vf610m4bootldr.o
 
 %: %.o
 	@$(VECHO) LD $@

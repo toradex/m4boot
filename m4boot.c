@@ -37,6 +37,7 @@
 #define CCM_CCOWR 0x8c
 #define CCM_CCOWR_START 0x00015a5a
 
+#define USELOADER
 #define ENTRY_POINT 0x8f000001UL
 #define LOAD_ADDR 0x8f000000UL
 
@@ -50,10 +51,15 @@ char *malloc_load_bin(const char *file, int *size);
 void save_bin(const char *file, char *buf, int size);
 int run_cortexm4(int mem_fd);
 
+extern char _binary_vf610m4bootldr_start;
+extern const char  _binary_vf610m4bootldr_size[];
+#define vf610m4bootldr_size ((int) (intptr_t) _binary_vf610m4bootldr_size)
+
 int main(int argc, char *argv[])
 {
 	int fd, err;
 	int size_image, size_initrd, size_fdt;
+	unsigned long int image_addr = LOAD_ADDR;
 	char *image;
 	char *initrd = NULL;
 	char *fdt = NULL;
@@ -95,27 +101,41 @@ int main(int argc, char *argv[])
 		goto err_devmem;
 	}
 
-	err = copy_bin_to_pmem(LOAD_ADDR, fd, image, size_image);
+	/* Loading kernel image */
+#ifdef USELOADER
+	copy_bin_to_pmem(LOAD_ADDR, fd, &_binary_vf610m4bootldr_start,
+			 vf610m4bootldr_size);
+	image_addr = LOAD_ADDR + vf610m4bootldr_size;
+
+	printf("vf610m4bootldr: %d bytes copied to 0x%08lx through 0x%08lx\n",
+	       vf610m4bootldr_size, LOAD_ADDR, LOAD_ADDR + vf610m4bootldr_size);
+#endif /* USELOADER */
+
+	err = copy_bin_to_pmem(image_addr, fd, image, size_image);
 	if (err < 0)
 		goto err_close;
-	printf("%s: %d bytes loaded to 0x%08lx through 0x%08lx\n",
-		argv[1], size_image, LOAD_ADDR, LOAD_ADDR + size_image);
+	printf("%s: %d bytes copied to 0x%08lx through 0x%08lx\n", argv[1],
+		size_image, image_addr, image_addr + size_image);
 
-	if (argc > 2)
+	if (initrd) {
+		err = copy_bin_to_pmem(LOAD_ADDR_INITRD, fd, initrd, size_initrd);
+		if (err < 0)
+			goto err_close;
+		printf("%s: %d bytes copied to 0x%08lx through 0x%08lx\n",
+			argv[2], size_initrd, LOAD_ADDR_INITRD,
+			LOAD_ADDR_INITRD + size_initrd);
+	}
+
+	if (argc > 3)
 	{
 		err = copy_bin_to_pmem(LOAD_ADDR_DTB, fd, fdt, size_fdt);
 		if (err < 0)
 			goto err_close;
-		printf("%s: %d bytes loaded to 0x%08lx through 0x%08lx\n",
-			argv[2], size_fdt, LOAD_ADDR_DTB,
-			LOAD_ADDR_DTB + size_image);
+		printf("%s: %d bytes copied to 0x%08lx through 0x%08lx\n",
+			argv[3], size_fdt, LOAD_ADDR_DTB,
+			LOAD_ADDR_DTB + size_fdt);
 
-		err = copy_bin_to_pmem(LOAD_ADDR_INITRD, fd, initrd, size_initrd);
-		if (err < 0)
-			goto err_close;
-		printf("%s: %d bytes loaded to 0x%08lx through 0x%08lx\n",
-			argv[3], size_initrd, LOAD_ADDR_INITRD,
-			LOAD_ADDR_INITRD + size_initrd);
+
 	}
 
 	err = run_cortexm4(fd);
@@ -186,15 +206,19 @@ free:
 int copy_bin_to_pmem(unsigned int pdest, int mem_fd, char *data, int size)
 {
 	unsigned char *mem;
-	mem = (unsigned char *) mmap(0, size, PROT_READ|PROT_WRITE,
-			MAP_SHARED, mem_fd, pdest);
+	long pagesize = sysconf(_SC_PAGE_SIZE);
+	unsigned int pdestoff = pdest & (pagesize - 1);
+	unsigned int pdestaligned = pdest & ~(pagesize - 1);
+
+	mem = (unsigned char *) mmap(0, size + pdestoff, PROT_READ|PROT_WRITE,
+			MAP_SHARED, mem_fd, pdestaligned);
 
 	if (mem == MAP_FAILED) {
-		fprintf(stderr, "Mapping of 0x%08x failed\n", pdest);
+		fprintf(stderr, "Mapping of 0x%08x failed\n", pdestaligned);
 		return -2;
 	}
 
-	memcpy((void *)mem, (void *)data, size);
+	memcpy((void *)(mem + pdestoff), (void *)data, size);
 
 	munmap(mem, size);
 

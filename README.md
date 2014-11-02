@@ -1,47 +1,25 @@
 m4boot
 ======
 
-Vybrid Cortex-M4 boot utility
+Vybrid Cortex-M4 boot utility to boot Linux
 
 Usage:
-m4boot [file]
+m4boot IMAGE [INITRD] [DTB] [BOOTARGS]
 
-The file requires to be a raw binary file compiled for ARMv7-M architecture,
-with a vector table accordint to Cortex-M4/Vybrid reference manual. The
-binary file need to begin with the reset vecotor table at offset 0. At
-offset 0x400 the entry point start. Text base needs to be 0x1f000400.
+IMAGE - XIP Linux Kernel image
+INITRD - initramfs (optionally compressed)
+DTB - Binary device tree  file
+BOOTARGS - Linux kernel boot args
 
-This utility loads that binary to 0x3f000000, which is the actual physical
-address for the SRAM accessible from the Cortex-A5. The Cortex-M4 has two
-addresses to access the same SRAM: 0x1f000000 which uses the code bus,
-while 0x3f000000 uses the data bus. Hence, the following configuration
-is recommended
+The utility loads the file in fixed locations of the physical memory of
+the SoC and starts the secondary Cortex-M4 CPU. The default addresses are:
+IMAGE: 0x8f000000
+INITRD: 0x89000000
+DTB: 0x8fff0000
 
-/-0x1f000000----------\ <= Start of sysRAM0 for M4 code bus
-|                     |    vector table
-|-0x1f000400          | <= text base/entry point for Cortex-M4
-|                     |
-|                     |
-|                     |
-|                     |
-.                     .
-.                     .
-|-0x3f000000----------| <= Start of sysRAM0 for A5/M4 data bus
-|                     |    address used by A5 to load the firmware
-|                     |
-|                     |
-|                     |
-|                     |
-|                     |
-|                     |
-|                     |
-|-0x3f040000----------| <= Start of sysRAM1
-|                     |    recommended place for data/bss
-|                     |
-|                     |
-|                     |
-|                     |
-|                     |
-|                     |
-\---------------------/ <= End of sysRAM1
-                           recommended place for stack
+Hence the upper 128MiB of memory on the external DDR RAM should be free
+for the Cortex-M4 (use mem=128M to restrict memory usage of the kernel
+running on the Cortex-A5 CPU).
+
+The utility makes sure the bootargs and the initrd start/end address end
+up in the device tree file as the Linux kernel expects it (/chosen nodes).

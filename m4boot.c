@@ -27,6 +27,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <string.h>
+#include "fdthelper.h"
 
 #define SRC_BASE 0x4006e000
 #define SRC_GPR2 0x28
@@ -41,93 +43,165 @@
 #define LOAD_ADDR_DTB 0x8fff0000UL
 #define ARG_ADDR_DTB 0x8fff0000UL
 
-#define LOAD_ADDR_INITRD 0x89000000
+#define LOAD_ADDR_INITRD 0x89000000UL
 
-int load_bin(const char *file, unsigned int dest, int mem_fd);
-int run_m4(int mem_fd);
+int copy_bin_to_pmem(unsigned int pdest, int mem_fd, char *data, int size);
+char *malloc_load_bin(const char *file, int *size);
+void save_bin(const char *file, char *buf, int size);
+int run_cortexm4(int mem_fd);
 
 int main(int argc, char *argv[])
 {
 	int fd, err;
+	int size_image, size_initrd, size_fdt;
+	char *image;
+	char *initrd = NULL;
+	char *fdt = NULL;
 	
 	if (argc < 2) {
-		fprintf(stderr, "Usage: m4boot [file]\n");
+		fprintf(stderr, "Usage: m4boot IMAGE [INITRD] [DTB] [BOOTARGS]\n");
 		return 1;
+	}
+
+	image = malloc_load_bin(argv[1], &size_image);
+	if (!image)
+		goto err_image;
+
+	if (argc > 2)
+	{
+		if (strcmp(argv[2], "-")) {
+			initrd = malloc_load_bin(argv[2], &size_initrd);
+			if (!initrd)
+				goto err_initrd;
+		}
+
+		fdt = malloc_load_bin(argv[3], &size_fdt);
+		if (!fdt)
+			goto err_fdt;
+
+		if (initrd)
+			patch_chosen_initrd(fdt, LOAD_ADDR_INITRD,
+					    LOAD_ADDR_INITRD + size_initrd);
+
+		if (argc > 4)
+			patch_chosen_bootargs(fdt, argv[4]);
+
+		size_fdt = fdt_newsize(fdt);
 	}
 
 	fd = open("/dev/mem", O_RDWR|O_SYNC);
 	if (fd < 0) {
 		fprintf(stderr, "Opening /dev/mem failed\n");
-		return 1;
+		goto err_devmem;
 	}
 
-	err = load_bin(argv[1], LOAD_ADDR, fd);
-	if (err)
+	err = copy_bin_to_pmem(LOAD_ADDR, fd, image, size_image);
+	if (err < 0)
 		goto err_close;
+	printf("%s: %d bytes loaded to 0x%08lx through 0x%08lx\n",
+		argv[1], size_image, LOAD_ADDR, LOAD_ADDR + size_image);
 
-	err = load_bin(argv[2], LOAD_ADDR_DTB, fd);
-	if (err)
-		goto err_close;
-
-	if (argc > 3) {
-		err = load_bin(argv[3], LOAD_ADDR_INITRD, fd);
-		if (err)
+	if (argc > 2)
+	{
+		err = copy_bin_to_pmem(LOAD_ADDR_DTB, fd, fdt, size_fdt);
+		if (err < 0)
 			goto err_close;
+		printf("%s: %d bytes loaded to 0x%08lx through 0x%08lx\n",
+			argv[2], size_fdt, LOAD_ADDR_DTB,
+			LOAD_ADDR_DTB + size_image);
+
+		err = copy_bin_to_pmem(LOAD_ADDR_INITRD, fd, initrd, size_initrd);
+		if (err < 0)
+			goto err_close;
+		printf("%s: %d bytes loaded to 0x%08lx through 0x%08lx\n",
+			argv[3], size_initrd, LOAD_ADDR_INITRD,
+			LOAD_ADDR_INITRD + size_initrd);
 	}
 
-	err = run_m4(fd);
+	err = run_cortexm4(fd);
 
 err_close:
 	close(fd);
 
+err_devmem:
+	if (fdt)
+		free(fdt);
+err_fdt:
+	if (initrd)
+		free(initrd);
+err_initrd:
+	free(image);
+err_image:
+
 	return 0;
 }
 
-int load_bin(const char *file, unsigned int dest, int mem_fd)
+void save_bin(const char *file, char *buf, int size)
 {
 	int fp;
-	size_t result;
-	int size, loaded = 0;
-	unsigned char *mem;
+	fp = open(file, O_CREAT | O_WRONLY, S_IRUSR | S_IWUSR);
+
+	write(fp, buf, size);
+
+	close(fp);
+}
+
+char *malloc_load_bin(const char *file, int *size)
+{
+	int fp;
+	int result, loaded = 0;
+	char *buf;
 
 	fp = open(file, O_RDONLY, 0);
 	if (!fp) {
 		fprintf(stderr, "Unable to open file %s\n", file);
-		return -1;
+		return NULL;
 	}
 
-	size = lseek(fp, 0L, SEEK_END);
+	*size = lseek(fp, 0L, SEEK_END);
 	lseek(fp, 0L, SEEK_SET);
-	fprintf(stderr, "Loading binary file %s, %d bytes\n", file, size);
 
-	mem = (unsigned char *) mmap(0, size, PROT_READ|PROT_WRITE,
-			MAP_SHARED, mem_fd, dest);
-
-	if (mem == MAP_FAILED) {
-		fprintf(stderr, "Mapping of 0x%08x failed\n", dest);
-		return 1;
-	}
-
+	buf = malloc(*size);
 	do {
-		result = read(fp, (void *)(mem + loaded), 4096);
+		result = read(fp, (void *)(buf + loaded), 4096);
 		loaded += result;
 	} while (result > 0);
 
 	if (result < 0) {
 		fprintf(stderr, "Failed to load file %s\n", file);
-		return -1;
+		goto free;
 	}
 
-	fprintf(stderr, "%s: %d bytes loaded to 0x%08x through 0x%08x\n",
-			file, loaded, dest, dest + loaded);
-
 	close(fp);
-	munmap(mem, size);
 
-	return 0;
+	fprintf(stderr, "%s: %d bytes loaded\n", file, loaded);
+
+	return buf;
+free:
+	free(buf);
+
+	return NULL;
 }
 
-int run_m4(int mem_fd)
+int copy_bin_to_pmem(unsigned int pdest, int mem_fd, char *data, int size)
+{
+	unsigned char *mem;
+	mem = (unsigned char *) mmap(0, size, PROT_READ|PROT_WRITE,
+			MAP_SHARED, mem_fd, pdest);
+
+	if (mem == MAP_FAILED) {
+		fprintf(stderr, "Mapping of 0x%08x failed\n", pdest);
+		return -2;
+	}
+
+	memcpy((void *)mem, (void *)data, size);
+
+	munmap(mem, size);
+
+	return size;
+}
+
+int run_cortexm4(int mem_fd)
 {
 	unsigned char *src_mem;
 	unsigned char *ccm_mem;

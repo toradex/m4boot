@@ -1,2 +1,5 @@
 m4boot
-m4boot.o
+libfdt/TODO
+*.o
+*.a
+*.swp

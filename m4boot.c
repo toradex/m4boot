@@ -38,13 +38,13 @@
 #define CCM_CCOWR_START 0x00015a5a
 
 #define USELOADER
-#define ENTRY_POINT 0x8f000001UL
+#define ENTRY_POINT 0x0f000001UL
 #define LOAD_ADDR 0x8f000000UL
 
 #define LOAD_ADDR_DTB 0x8fff0000UL
 #define ARG_ADDR_DTB 0x8fff0000UL
 
-#define LOAD_ADDR_INITRD 0x89000000UL
+#define LOAD_ADDR_INITRD 0x8d000000UL
 
 int copy_bin_to_pmem(unsigned int pdest, int mem_fd, char *data, int size);
 char *malloc_load_bin(const char *file, int *size);
